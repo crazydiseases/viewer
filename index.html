@@ -2,7 +2,10 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1" />
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover" />
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+<meta name="theme-color" content="#0b0d10" />
 <title>EPG Guide</title>
 <style>
   :root{
@@ -10,10 +13,12 @@
     --text:#e8ecf1; --dim:#8b95a5; --accent:#3aa0ff; --accent2:#ff5c5c;
     --row:#10141b; --rowAlt:#12171f; --chip:#1f2630;
   }
-  *{box-sizing:border-box;}
-  html,body{margin:0;height:100%;background:var(--bg);color:var(--text);
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent;}
+  html,body{margin:0;height:100%;background:var(--bg);color:var(--text);overscroll-behavior:none;
     font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;}
-  #app{display:flex;flex-direction:column;height:100vh;}
+  #app{display:flex;flex-direction:column;height:100vh;height:100dvh;
+    padding-top:env(safe-area-inset-top);padding-bottom:env(safe-area-inset-bottom);}
+  button, .dayTab, .regionTab, .groupHeader, .prog{touch-action:manipulation;}
 
   /* Top bar */
   #topbar{background:var(--panel);border-bottom:1px solid var(--border);
@@ -67,7 +72,8 @@
     text-transform:uppercase;border-bottom:1px solid var(--border);border-top:1px solid var(--border);}
   .groupHeaderBody{background:#161c26;}
 
-  #bodyScroll{flex:1 1 auto;overflow:auto;position:relative;background:var(--row);}
+  #bodyScroll{flex:1 1 auto;overflow:auto;position:relative;background:var(--row);
+    -webkit-overflow-scrolling:touch;overscroll-behavior:contain;}
   #bodyInner{position:relative;}
   .gridRow{position:absolute;left:0;border-bottom:1px solid var(--border);}
   .gridRow.alt{background:rgba(255,255,255,0.015);}
@@ -99,6 +105,37 @@
   ::-webkit-scrollbar{height:10px;width:10px;}
   ::-webkit-scrollbar-thumb{background:#2a3240;border-radius:5px;}
   ::-webkit-scrollbar-track{background:transparent;}
+
+  .groupToggleBtn{padding:6px 10px;}
+
+  /* Tablet (iPad portrait and similar) */
+  @media (max-width: 900px){
+    #corner, #channelScroll{width:150px;flex:0 0 150px;}
+    #topbar input[type=text]{font-size:16px;} /* prevents iOS auto-zoom on focus */
+    select{font-size:16px;}
+  }
+
+  /* Phone (iPhone) */
+  @media (max-width: 600px){
+    #topbar{padding:8px 10px;}
+    .row1{gap:6px;}
+    #urlInput{flex:1 1 100%;order:3;}
+    #presetSelect{flex:1 1 auto;}
+    #loadBtn, #nowBtn{flex:0 0 auto;padding:9px 12px;}
+    #subbar{padding:6px 10px;flex-wrap:wrap;row-gap:6px;}
+    #searchInput{flex:1 1 140px;}
+    #regionTabs{margin-left:0;order:4;width:100%;overflow-x:auto;}
+    #corner, #channelScroll{width:112px;flex:0 0 112px;}
+    #corner{font-size:10.5px;padding:0 8px;}
+    .chanRow{padding:0 6px;gap:6px;}
+    .chanRow img{width:22px;height:22px;}
+    .chanRow span{font-size:11.5px;}
+    .groupHeader{font-size:10px;padding:0 6px;}
+    .prog{font-size:11px;padding:3px 6px;}
+    .prog .t{font-size:9.5px;}
+    .dayTab, .regionTab{padding:8px 12px;font-size:12px;}
+    #modal{padding:16px;}
+  }
 </style>
 </head>
 <body>
@@ -121,6 +158,8 @@
       <div class="regionTab" data-region="us">US only</div>
       <div class="regionTab" data-region="all">All</div>
     </div>
+    <button id="expandAllBtn" class="ghost groupToggleBtn">Expand all</button>
+    <button id="collapseAllBtn" class="ghost groupToggleBtn">Collapse all</button>
   </div>
   <div id="gridWrap">
     <div id="emptyState">
@@ -303,7 +342,8 @@
     days: [],             // array of local-midnight timestamps (ms)
     selectedDayIdx: 0,
     search: "",
-    region: "ukus"
+    region: "ukus",
+    collapsedGroups: new Set() // group keys currently collapsed; populated once groups are known
   };
 
   function regionOf(id){
@@ -358,10 +398,30 @@
       const arr = buckets.get(g);
       if (!arr.length) continue;
       arr.sort((a,b) => a.name.localeCompare(b.name));
-      items.push({kind:"header", label: `${g} (${arr.length})`});
-      for (const c of arr) items.push({kind:"chan", chan:c});
+      const collapsed = state.collapsedGroups.has(g);
+      items.push({kind:"header", group: g, collapsed, label: `${g} (${arr.length})`});
+      if (!collapsed) for (const c of arr) items.push({kind:"chan", chan:c});
     }
     return items;
+  }
+
+  function toggleGroup(g){
+    if (state.collapsedGroups.has(g)) state.collapsedGroups.delete(g);
+    else state.collapsedGroups.add(g);
+    rebuildLayout();
+  }
+
+  function setAllGroupsCollapsed(collapsed){
+    state.collapsedGroups = collapsed ? new Set(GROUP_ORDER) : new Set();
+    rebuildLayout();
+  }
+
+  function rebuildLayout(){
+    state.displayItems = layoutItems(state.channels);
+    const {offsets, total} = computeOffsets(state.displayItems);
+    state.offsets = offsets;
+    state.totalHeight = total;
+    syncAndRender();
   }
 
   function computeOffsets(items){
@@ -476,8 +536,10 @@
       const top = offsets[i];
 
       if (item.kind === "header"){
-        chanHtml += `<div class="groupHeader" style="top:${top}px;height:${HEADER_H}px;">${escapeHtml(item.label)}</div>`;
-        bodyHtml += `<div class="groupHeader groupHeaderBody" style="top:${top}px;height:${HEADER_H}px;width:${1440*PX_PER_MIN}px;"></div>`;
+        const chevron = item.collapsed ? "▸" : "▾";
+        chanHtml += `<div class="groupHeader" data-group="${escapeHtml(item.group)}" style="top:${top}px;height:${HEADER_H}px;cursor:pointer;">`+
+          `<span style="display:inline-block;width:14px;">${chevron}</span>${escapeHtml(item.label)}</div>`;
+        bodyHtml += `<div class="groupHeader groupHeaderBody" data-group="${escapeHtml(item.group)}" style="top:${top}px;height:${HEADER_H}px;width:${1440*PX_PER_MIN}px;cursor:pointer;"></div>`;
         continue;
       }
 
@@ -524,6 +586,13 @@
     bodyInner.querySelectorAll(".prog").forEach(el => {
       el.addEventListener("click", () => openModal(el.dataset));
     });
+
+    channelInner.querySelectorAll(".groupHeader[data-group]").forEach(el => {
+      el.addEventListener("click", () => toggleGroup(el.dataset.group));
+    });
+    bodyInner.querySelectorAll(".groupHeader[data-group]").forEach(el => {
+      el.addEventListener("click", () => toggleGroup(el.dataset.group));
+    });
   }
 
   function openModal(data){
@@ -564,12 +633,10 @@
     state.channels = state.allChannels.filter(c =>
       matchesRegion(c) && (!q || c.name.toLowerCase().includes(q))
     );
-    state.displayItems = layoutItems(state.channels);
-    const {offsets, total} = computeOffsets(state.displayItems);
-    state.offsets = offsets;
-    state.totalHeight = total;
+    // Searching implies "find it fast" — auto-expand every group so matches aren't hidden.
+    if (q) state.collapsedGroups = new Set();
     document.getElementById("bodyScroll") && (document.getElementById("bodyScroll").scrollTop = 0);
-    syncAndRender();
+    rebuildLayout();
   }
 
   function jumpToNow(){
@@ -622,6 +689,8 @@
       state.search = "";
       searchInput.value = "";
       state.channels = state.allChannels.filter(matchesRegion);
+      // Start fully collapsed so a fresh load doesn't dump hundreds of rows on screen at once.
+      state.collapsedGroups = new Set(GROUP_ORDER);
       state.displayItems = layoutItems(state.channels);
       { const {offsets, total} = computeOffsets(state.displayItems); state.offsets = offsets; state.totalHeight = total; }
 
@@ -665,6 +734,8 @@
     state.region = el.dataset.region;
     applyFilters();
   });
+  document.getElementById("expandAllBtn").addEventListener("click", () => setAllGroupsCollapsed(false));
+  document.getElementById("collapseAllBtn").addEventListener("click", () => setAllGroupsCollapsed(true));
 })();
 </script>
 </body>
