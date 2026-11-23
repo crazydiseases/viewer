@@ -62,6 +62,10 @@
     padding:0 10px;border-bottom:1px solid var(--border);overflow:hidden;}
   .chanRow img{width:26px;height:26px;object-fit:contain;border-radius:4px;background:#000;flex:0 0 auto;}
   .chanRow span{font-size:12.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+  .groupHeader{position:absolute;left:0;right:0;display:flex;align-items:center;padding:0 10px;
+    background:#1a2230;color:#9fb3cc;font-size:11px;font-weight:700;letter-spacing:.04em;
+    text-transform:uppercase;border-bottom:1px solid var(--border);border-top:1px solid var(--border);}
+  .groupHeaderBody{background:#161c26;}
 
   #bodyScroll{flex:1 1 auto;overflow:auto;position:relative;background:var(--row);}
   #bodyInner{position:relative;}
@@ -199,7 +203,7 @@
     if (!str) return null;
     const m = /^(\d{4})(\d{2})(\d{2})(\d{2})(\d{2})(\d{2})\s*([+-]\d{4})?$/.exec(str.trim());
     if (!m) { const t = Date.parse(str); return isNaN(t) ? null : t; }
-    const [,, Y,Mo,D,H,Mi,S,Off] = [m[0],m[1],m[2],m[3],m[4],m[5],m[6],m[7]];
+    const [, Y, Mo, D, H, Mi, S, Off] = m;
     let ms = Date.UTC(+Y, +Mo-1, +D, +H, +Mi, +S);
     if (Off) {
       const sign = Off[0] === "-" ? -1 : 1;
@@ -320,6 +324,56 @@
     return true;
   }
 
+  const GROUP_ORDER = [
+    "UK General & Entertainment", "UK Movies", "UK Sport", "UK News",
+    "US General & Entertainment", "US Movies", "US Sport", "US News",
+    "Other"
+  ];
+  const SPORT_RE = /\bsport|sky sports|bt sport|tnt sports|eurosport|premier sports|dazn|motorsport|nascar|racing|golf channel|nfl network|nba tv|mlb network|nhl network|\bwwe\b|\bufc\b|boxing|combat|fight sports|cricket|rugby|formula ?1|\bf1\b/i;
+  const MOVIES_RE = /\bmovie|cinema|film4|box office|hallmark|\bstarz\b|\bepix\b|\bmgm\b|\btcm\b|great movies|great action|great romance|sony movies|paramount network/i;
+  const NEWS_RE = /\bnews\b|\bcnn\b|msnbc|fox news|sky news|bbc news|bloomberg|\bcnbc\b|al ?jazeera|newsmax/i;
+
+  function categorize(chan){
+    const region = regionOf(chan.id); // "uk" | "us" | "other"
+    if (region === "other") return "Other";
+    const n = chan.name;
+    let type = "General & Entertainment";
+    if (SPORT_RE.test(n)) type = "Sport";
+    else if (MOVIES_RE.test(n)) type = "Movies";
+    else if (NEWS_RE.test(n)) type = "News";
+    return (region === "uk" ? "UK " : "US ") + type;
+  }
+
+  const HEADER_H = 30;
+
+  function layoutItems(channels){
+    const buckets = new Map();
+    for (const g of GROUP_ORDER) buckets.set(g, []);
+    for (const c of channels){
+      const g = GROUP_ORDER.includes(categorize(c)) ? categorize(c) : "Other";
+      buckets.get(g).push(c);
+    }
+    const items = [];
+    for (const g of GROUP_ORDER){
+      const arr = buckets.get(g);
+      if (!arr.length) continue;
+      arr.sort((a,b) => a.name.localeCompare(b.name));
+      items.push({kind:"header", label: `${g} (${arr.length})`});
+      for (const c of arr) items.push({kind:"chan", chan:c});
+    }
+    return items;
+  }
+
+  function computeOffsets(items){
+    let y = 0;
+    const offsets = new Array(items.length);
+    for (let i = 0; i < items.length; i++){
+      offsets[i] = y;
+      y += (items[i].kind === "header" ? HEADER_H : ROW_H);
+    }
+    return {offsets, total: y};
+  }
+
   function localMidnight(ms){
     const d = new Date(ms);
     d.setHours(0,0,0,0);
@@ -372,6 +426,16 @@
     requestAnimationFrame(() => { rafPending = false; doRender(); });
   }
 
+  function findStartIndex(offsets, y){
+    // largest i such that offsets[i] <= y (offsets is sorted ascending)
+    let lo = 0, hi = offsets.length - 1, ans = 0;
+    while (lo <= hi){
+      const mid = (lo+hi) >> 1;
+      if (offsets[mid] <= y){ ans = mid; lo = mid+1; } else { hi = mid-1; }
+    }
+    return ans;
+  }
+
   function doRender(){
     const bodyScroll = document.getElementById("bodyScroll");
     const channelScroll = document.getElementById("channelScroll");
@@ -381,11 +445,16 @@
     channelScroll.scrollTop = bodyScroll.scrollTop;
     rulerScroll.scrollLeft = bodyScroll.scrollLeft;
 
+    const items = state.displayItems;
+    const offsets = state.offsets;
+    const totalH = state.totalHeight;
+    if (!items || !items.length) return;
+
     const scrollTop = bodyScroll.scrollTop;
     const viewH = bodyScroll.clientHeight;
-    const total = state.channels.length;
-    const firstIdx = Math.max(0, Math.floor(scrollTop/ROW_H) - 4);
-    const lastIdx = Math.min(total, Math.ceil((scrollTop+viewH)/ROW_H) + 4);
+    const firstIdx = Math.max(0, findStartIndex(offsets, scrollTop) - 3);
+    const lastBoundIdx = findStartIndex(offsets, scrollTop + viewH) + 3;
+    const lastIdx = Math.min(items.length, lastBoundIdx + 1);
 
     const scrollLeft = bodyScroll.scrollLeft;
     const viewW = bodyScroll.clientWidth;
@@ -397,20 +466,29 @@
 
     const channelInner = document.getElementById("channelInner");
     const bodyInner = document.getElementById("bodyInner");
-    channelInner.style.height = bodyInner.style.height = (total*ROW_H) + "px";
+    channelInner.style.height = bodyInner.style.height = totalH + "px";
 
     let chanHtml = "";
     let bodyHtml = "";
+    let chanRowCounter = 0;
     for (let i = firstIdx; i < lastIdx; i++){
-      const chan = state.channels[i];
-      const top = i*ROW_H;
+      const item = items[i];
+      const top = offsets[i];
+
+      if (item.kind === "header"){
+        chanHtml += `<div class="groupHeader" style="top:${top}px;height:${HEADER_H}px;">${escapeHtml(item.label)}</div>`;
+        bodyHtml += `<div class="groupHeader groupHeaderBody" style="top:${top}px;height:${HEADER_H}px;width:${1440*PX_PER_MIN}px;"></div>`;
+        continue;
+      }
+
+      const chan = item.chan;
       chanHtml += `<div class="chanRow" style="top:${top}px;height:${ROW_H}px;">`+
         (chan.icon ? `<img src="${escapeHtml(chan.icon)}" loading="lazy" onerror="this.style.display='none'">` : `<div style="width:26px;flex:0 0 auto;"></div>`) +
         `<span title="${escapeHtml(chan.name)}">${escapeHtml(chan.name)}</span></div>`;
 
       const progs = dayProgsForChannel(chan, dayStart, dayEnd);
-      bodyHtml += `<div class="gridRow ${i%2?"alt":""}" style="top:${top}px;height:${ROW_H}px;width:${1440*PX_PER_MIN}px;">`;
-      let cursor = dayStart;
+      bodyHtml += `<div class="gridRow ${chanRowCounter%2?"alt":""}" style="top:${top}px;height:${ROW_H}px;width:${1440*PX_PER_MIN}px;">`;
+      chanRowCounter++;
       for (const p of progs){
         const s = Math.max(p.start, dayStart);
         const e = Math.min(p.stop, dayEnd);
@@ -439,7 +517,7 @@
       const line = document.createElement("div");
       line.className = "nowLine";
       line.style.left = left + "px";
-      line.style.height = (total*ROW_H) + "px";
+      line.style.height = totalH + "px";
       bodyInner.appendChild(line);
     }
 
@@ -486,6 +564,10 @@
     state.channels = state.allChannels.filter(c =>
       matchesRegion(c) && (!q || c.name.toLowerCase().includes(q))
     );
+    state.displayItems = layoutItems(state.channels);
+    const {offsets, total} = computeOffsets(state.displayItems);
+    state.offsets = offsets;
+    state.totalHeight = total;
     document.getElementById("bodyScroll") && (document.getElementById("bodyScroll").scrollTop = 0);
     syncAndRender();
   }
@@ -540,6 +622,8 @@
       state.search = "";
       searchInput.value = "";
       state.channels = state.allChannels.filter(matchesRegion);
+      state.displayItems = layoutItems(state.channels);
+      { const {offsets, total} = computeOffsets(state.displayItems); state.offsets = offsets; state.totalHeight = total; }
 
       gridWrap.innerHTML = "";
       buildGridDOM();
