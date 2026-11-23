@@ -1,0 +1,587 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>EPG Guide</title>
+<style>
+  :root{
+    --bg:#0b0d10; --panel:#141820; --panel2:#1b212b; --border:#262d39;
+    --text:#e8ecf1; --dim:#8b95a5; --accent:#3aa0ff; --accent2:#ff5c5c;
+    --row:#10141b; --rowAlt:#12171f; --chip:#1f2630;
+  }
+  *{box-sizing:border-box;}
+  html,body{margin:0;height:100%;background:var(--bg);color:var(--text);
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;}
+  #app{display:flex;flex-direction:column;height:100vh;}
+
+  /* Top bar */
+  #topbar{background:var(--panel);border-bottom:1px solid var(--border);
+    padding:10px 14px;display:flex;flex-wrap:wrap;gap:8px;align-items:center;flex:0 0 auto;}
+  #topbar input[type=text]{background:var(--panel2);border:1px solid var(--border);color:var(--text);
+    border-radius:6px;padding:7px 10px;font-size:13px;min-width:120px;}
+  #urlInput{flex:1 1 320px;min-width:200px;font-family:ui-monospace,Menlo,Consolas,monospace;}
+  select{background:var(--panel2);border:1px solid var(--border);color:var(--text);
+    border-radius:6px;padding:7px 10px;font-size:13px;}
+  button{background:var(--accent);border:none;color:#fff;border-radius:6px;padding:7px 14px;
+    font-size:13px;font-weight:600;cursor:pointer;}
+  button:hover{filter:brightness(1.1);}
+  button.ghost{background:var(--panel2);color:var(--text);border:1px solid var(--border);}
+  #status{font-size:12px;color:var(--dim);flex:1 1 100%;min-height:14px;}
+  .row1{display:flex;gap:8px;align-items:center;flex-wrap:wrap;width:100%;}
+
+  /* Day tabs + search bar */
+  #subbar{background:var(--panel);border-bottom:1px solid var(--border);
+    padding:8px 14px;display:flex;gap:8px;align-items:center;flex:0 0 auto;overflow-x:auto;}
+  #dayTabs{display:flex;gap:6px;}
+  .dayTab{padding:6px 12px;border-radius:16px;background:var(--panel2);color:var(--dim);
+    font-size:12.5px;cursor:pointer;border:1px solid var(--border);white-space:nowrap;}
+  .dayTab.active{background:var(--accent);color:#fff;border-color:var(--accent);}
+  #searchInput{min-width:160px;}
+  #nowBtn{white-space:nowrap;}
+  #regionTabs{display:flex;gap:6px;margin-left:auto;}
+  .regionTab{padding:6px 12px;border-radius:16px;background:var(--panel2);color:var(--dim);
+    font-size:12.5px;cursor:pointer;border:1px solid var(--border);white-space:nowrap;}
+  .regionTab.active{background:var(--accent2);color:#fff;border-color:var(--accent2);}
+
+  /* Grid */
+  #gridWrap{flex:1 1 auto;display:flex;flex-direction:column;overflow:hidden;min-height:0;}
+  #headerRow{display:flex;flex:0 0 auto;border-bottom:1px solid var(--border);}
+  #corner{width:200px;flex:0 0 200px;background:var(--panel);border-right:1px solid var(--border);
+    display:flex;align-items:center;padding:0 12px;font-size:12px;color:var(--dim);font-weight:600;}
+  #rulerScroll{flex:1 1 auto;overflow:hidden;background:var(--panel);position:relative;}
+  #ruler{height:36px;position:relative;}
+  .rulerMark{position:absolute;top:0;height:100%;border-left:1px solid var(--border);
+    font-size:11px;color:var(--dim);padding-left:4px;line-height:36px;white-space:nowrap;}
+
+  #bodyRow{flex:1 1 auto;display:flex;overflow:hidden;min-height:0;}
+  #channelScroll{width:200px;flex:0 0 200px;overflow:hidden;background:var(--panel);
+    border-right:1px solid var(--border);position:relative;}
+  #channelInner{position:relative;}
+  .chanRow{position:absolute;left:0;right:0;display:flex;align-items:center;gap:8px;
+    padding:0 10px;border-bottom:1px solid var(--border);overflow:hidden;}
+  .chanRow img{width:26px;height:26px;object-fit:contain;border-radius:4px;background:#000;flex:0 0 auto;}
+  .chanRow span{font-size:12.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+
+  #bodyScroll{flex:1 1 auto;overflow:auto;position:relative;background:var(--row);}
+  #bodyInner{position:relative;}
+  .gridRow{position:absolute;left:0;border-bottom:1px solid var(--border);}
+  .gridRow.alt{background:rgba(255,255,255,0.015);}
+  .prog{position:absolute;top:4px;bottom:4px;background:var(--chip);border:1px solid var(--border);
+    border-radius:6px;padding:4px 8px;font-size:12px;overflow:hidden;cursor:pointer;
+    display:flex;flex-direction:column;justify-content:center;}
+  .prog:hover{background:#28323f;border-color:var(--accent);}
+  .prog.live{border-left:3px solid var(--accent2);}
+  .prog .t{color:var(--dim);font-size:10.5px;}
+  .prog .ti{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-weight:500;}
+  .nowLine{position:absolute;top:0;bottom:0;width:2px;background:var(--accent2);z-index:5;}
+  .nowLine::before{content:"";position:absolute;top:-6px;left:-4px;width:10px;height:10px;
+    border-radius:50%;background:var(--accent2);}
+  .empty-cell{position:absolute;top:0;bottom:0;color:#3a4250;font-size:11px;}
+
+  /* Modal */
+  #modalBg{position:fixed;inset:0;background:rgba(0,0,0,0.6);display:none;
+    align-items:center;justify-content:center;z-index:50;}
+  #modal{background:var(--panel2);border:1px solid var(--border);border-radius:10px;
+    padding:18px 20px;max-width:420px;width:90%;}
+  #modal h3{margin:0 0 6px;font-size:16px;}
+  #modal .meta{color:var(--dim);font-size:12.5px;margin-bottom:10px;}
+  #modal p{font-size:13.5px;line-height:1.5;color:#cfd6e0;max-height:220px;overflow:auto;}
+  #modal .closeBtn{margin-top:14px;}
+
+  #emptyState{flex:1;display:flex;align-items:center;justify-content:center;
+    color:var(--dim);font-size:13px;text-align:center;padding:40px;flex-direction:column;gap:10px;}
+
+  ::-webkit-scrollbar{height:10px;width:10px;}
+  ::-webkit-scrollbar-thumb{background:#2a3240;border-radius:5px;}
+  ::-webkit-scrollbar-track{background:transparent;}
+</style>
+</head>
+<body>
+<div id="app">
+  <div id="topbar">
+    <div class="row1">
+      <select id="presetSelect"></select>
+      <input id="urlInput" type="text" spellcheck="false" />
+      <button id="loadBtn">Load guide</button>
+      <button id="nowBtn" class="ghost">Jump to now</button>
+    </div>
+    <div id="status">Pick a feed (or paste your own XMLTV / .xml.gz URL) and click Load guide.</div>
+  </div>
+  <div id="subbar">
+    <div id="dayTabs"></div>
+    <input id="searchInput" type="text" placeholder="Search channels…" />
+    <div id="regionTabs">
+      <div class="regionTab active" data-region="ukus">UK + US</div>
+      <div class="regionTab" data-region="uk">UK only</div>
+      <div class="regionTab" data-region="us">US only</div>
+      <div class="regionTab" data-region="all">All</div>
+    </div>
+  </div>
+  <div id="gridWrap">
+    <div id="emptyState">
+      <div style="font-size:28px;">📺</div>
+      <div>No guide loaded yet — load a feed above to see the grid.</div>
+    </div>
+  </div>
+</div>
+
+<div id="modalBg">
+  <div id="modal">
+    <h3 id="mTitle"></h3>
+    <div class="meta" id="mMeta"></div>
+    <p id="mDesc"></p>
+    <button class="closeBtn ghost" id="mClose">Close</button>
+  </div>
+</div>
+
+<script>
+(function(){
+  "use strict";
+
+  const PRESETS = [
+    ["epg1","epg1.xml.gz"],["epg2","epg2.xml.gz"],["epg6","epg6.xml.gz"],["epg9","epg9.xml.gz"],
+    ["epg13","epg13.xml.gz"],["epg14","epg14.xml.gz"],["epg15","epg15.xml.gz"],["epg20","epg20.xml.gz"],
+    ["epg28","epg28.xml.gz"],["epg29","epg29.xml.gz"],["epg31","epg31.xml.gz"],["epg32","epg32.xml.gz"],
+    ["epg37","epg37.xml.gz"],["epg38","epg38.xml.gz"],["epg41","epg41.xml.gz"],["epg42","epg42.xml.gz"],
+    ["epg43","epg43.xml.gz"],["epg47","epg47.xml.gz"],["epg49","epg49.xml.gz"],["epg50","epg50.xml.gz"],
+    ["epg51","epg51.xml.gz"],["epg52","epg52.xml.gz"],["epg53","epg53.xml.gz"],["epg55","epg55.xml.gz"],
+    ["epg59","epg59.xml.gz"],["epg63","epg63.xml.gz"],["epg64","epg64.xml.gz"],["epg65","epg65.xml.gz"],
+    ["epg66","epg66.xml.gz"]
+  ];
+  const REPO_BASE = "https://raw.githubusercontent.com/ferteque/Curated-M3U-Repository/main/";
+  const DEFAULT_KEY = "epg15"; // good UK (BBC/ITV/C4/Sky) + US (ESPN/CNN/HBO) coverage at a manageable size
+
+  const presetSelect = document.getElementById("presetSelect");
+  const urlInput = document.getElementById("urlInput");
+  const loadBtn = document.getElementById("loadBtn");
+  const nowBtn = document.getElementById("nowBtn");
+  const statusEl = document.getElementById("status");
+  const dayTabsEl = document.getElementById("dayTabs");
+  const searchInput = document.getElementById("searchInput");
+  const gridWrap = document.getElementById("gridWrap");
+
+  presetSelect.innerHTML =
+    '<option value="">Custom URL…</option>' +
+    PRESETS.map(([k]) => `<option value="${k}">${k}</option>`).join("");
+  presetSelect.value = DEFAULT_KEY;
+  urlInput.value = REPO_BASE + "epg15.xml.gz";
+
+  presetSelect.addEventListener("change", () => {
+    const k = presetSelect.value;
+    if (k) {
+      const f = PRESETS.find(p => p[0] === k);
+      urlInput.value = REPO_BASE + f[1];
+    }
+  });
+  urlInput.addEventListener("input", () => { presetSelect.value = ""; });
+
+  function setStatus(msg, isError){
+    statusEl.textContent = msg;
+    statusEl.style.color = isError ? "#ff8080" : "";
+  }
+
+  // ---------- Entity decoding ----------
+  const ENT = {amp:"&",lt:"<",gt:">",quot:'"',apos:"'",nbsp:" "};
+  function decodeEntities(s){
+    if (!s) return s;
+    return s.replace(/&(#x?[0-9a-fA-F]+|[a-zA-Z]+);/g, (m, g) => {
+      if (g[0] === "#") {
+        const code = g[1] === "x" || g[1] === "X" ? parseInt(g.slice(2),16) : parseInt(g.slice(1),10);
+        return isNaN(code) ? m : String.fromCodePoint(code);
+      }
+      return ENT.hasOwnProperty(g) ? ENT[g] : m;
+    });
+  }
+
+  function parseOffsetDate(str){
+    // "20261123000000 +0000"
+    if (!str) return null;
+    const m = /^(\d{4})(\d{2})(\d{2})(\d{2})(\d{2})(\d{2})\s*([+-]\d{4})?$/.exec(str.trim());
+    if (!m) { const t = Date.parse(str); return isNaN(t) ? null : t; }
+    const [,, Y,Mo,D,H,Mi,S,Off] = [m[0],m[1],m[2],m[3],m[4],m[5],m[6],m[7]];
+    let ms = Date.UTC(+Y, +Mo-1, +D, +H, +Mi, +S);
+    if (Off) {
+      const sign = Off[0] === "-" ? -1 : 1;
+      const offH = +Off.slice(1,3), offM = +Off.slice(3,5);
+      ms -= sign * (offH*60+offM) * 60000;
+    }
+    return ms;
+  }
+
+  // ---------- XMLTV parsing (hand-rolled scanner, faster than full DOM for 10s of MB) ----------
+  function parseXMLTV(text){
+    const channels = new Map(); // id -> {id,name,icon}
+    const progsByChannel = new Map(); // id -> array of {start,stop,title,desc,live}
+
+    const chanRe = /<channel\b([^>]*)>([\s\S]*?)<\/channel>/g;
+    let m;
+    while ((m = chanRe.exec(text))) {
+      const attrs = m[1], body = m[2];
+      const idMatch = /\bid="([^"]*)"/.exec(attrs);
+      if (!idMatch) continue;
+      const id = decodeEntities(idMatch[1]);
+      const nameMatch = /<display-name[^>]*>([^<]*)<\/display-name>/.exec(body);
+      const iconMatch = /<icon\b[^>]*\bsrc="([^"]*)"/.exec(body);
+      channels.set(id, {
+        id,
+        name: nameMatch ? decodeEntities(nameMatch[1]).trim() : id,
+        icon: iconMatch ? decodeEntities(iconMatch[1]) : null
+      });
+    }
+
+    const progRe = /<programme\b([^>]*)>([\s\S]*?)<\/programme>/g;
+    while ((m = progRe.exec(text))) {
+      const attrs = m[1], body = m[2];
+      const startM = /\bstart="([^"]*)"/.exec(attrs);
+      const stopM = /\bstop="([^"]*)"/.exec(attrs);
+      const chM = /\bchannel="([^"]*)"/.exec(attrs);
+      if (!startM || !stopM || !chM) continue;
+      const start = parseOffsetDate(startM[1]);
+      const stop = parseOffsetDate(stopM[1]);
+      if (start == null || stop == null) continue;
+      const chId = decodeEntities(chM[1]);
+      const titleM = /<title[^>]*>([^<]*)<\/title>/.exec(body);
+      const descM = /<desc[^>]*>([^<]*)<\/desc>/.exec(body);
+      const isLive = /<live\s*\/?>/.test(body);
+      let arr = progsByChannel.get(chId);
+      if (!arr) { arr = []; progsByChannel.set(chId, arr); }
+      arr.push({
+        start, stop,
+        title: titleM ? decodeEntities(titleM[1]).trim() : "(untitled)",
+        desc: descM ? decodeEntities(descM[1]).trim() : "",
+        live: isLive
+      });
+      if (!channels.has(chId)) {
+        channels.set(chId, {id: chId, name: chId, icon: null});
+      }
+    }
+
+    for (const arr of progsByChannel.values()) arr.sort((a,b) => a.start - b.start);
+
+    return {channels, progsByChannel};
+  }
+
+  // ---------- Fetch + decompress ----------
+  async function fetchGuide(url){
+    setStatus("Downloading " + url + " …");
+    const resp = await fetch(url, {mode:"cors"});
+    if (!resp.ok) throw new Error("HTTP " + resp.status + " fetching feed");
+    const buf = await resp.arrayBuffer();
+    const bytes = new Uint8Array(buf.slice(0,2));
+    let text;
+    if (bytes[0] === 0x1f && bytes[1] === 0x8b) {
+      setStatus("Decompressing (" + (buf.byteLength/1024/1024).toFixed(1) + " MB gz)…");
+      if (typeof DecompressionStream === "undefined") {
+        throw new Error("This browser lacks gzip DecompressionStream support — try Chrome, Edge or Firefox, or point at an uncompressed .xml URL.");
+      }
+      const ds = new DecompressionStream("gzip");
+      const stream = new Blob([buf]).stream().pipeThrough(ds);
+      text = await new Response(stream).text();
+    } else {
+      text = new TextDecoder("utf-8").decode(buf);
+    }
+    setStatus("Parsing " + (text.length/1024/1024).toFixed(1) + " MB of XML…");
+    // yield to paint before heavy sync parse
+    await new Promise(r => setTimeout(r, 10));
+    const parsed = parseXMLTV(text);
+    return parsed;
+  }
+
+  // ---------- Grid rendering ----------
+  const ROW_H = 54;
+  const PX_PER_MIN = 4; // 1440*4 = 5760px per day
+  const DAY_MS = 86400000;
+
+  let state = {
+    channels: [],         // filtered+sorted array of channel objs with .progs
+    allChannels: [],      // unfiltered
+    days: [],             // array of local-midnight timestamps (ms)
+    selectedDayIdx: 0,
+    search: "",
+    region: "ukus"
+  };
+
+  function regionOf(id){
+    const s = id.toLowerCase();
+    const isUk = /\.uk(\.|$)/.test(s);
+    const isUs = /\.us(\.|$)/.test(s);
+    if (isUk) return "uk";
+    if (isUs) return "us";
+    return "other";
+  }
+
+  function matchesRegion(chan){
+    if (state.region === "all") return true;
+    const r = regionOf(chan.id);
+    if (state.region === "uk") return r === "uk";
+    if (state.region === "us") return r === "us";
+    if (state.region === "ukus") return r === "uk" || r === "us";
+    return true;
+  }
+
+  function localMidnight(ms){
+    const d = new Date(ms);
+    d.setHours(0,0,0,0);
+    return d.getTime();
+  }
+
+  function buildGridDOM(){
+    gridWrap.innerHTML = `
+      <div id="headerRow">
+        <div id="corner">CHANNEL</div>
+        <div id="rulerScroll"><div id="ruler"></div></div>
+      </div>
+      <div id="bodyRow">
+        <div id="channelScroll"><div id="channelInner"></div></div>
+        <div id="bodyScroll"><div id="bodyInner"></div></div>
+      </div>`;
+  }
+
+  function renderRuler(dayStart){
+    const ruler = document.getElementById("ruler");
+    const width = 1440*PX_PER_MIN;
+    ruler.style.width = width + "px";
+    let html = "";
+    for (let h = 0; h < 24; h++){
+      const left = h*60*PX_PER_MIN;
+      const label = new Date(dayStart + h*3600000).toLocaleTimeString([], {hour:"numeric"});
+      html += `<div class="rulerMark" style="left:${left}px;width:${60*PX_PER_MIN}px;">${label}</div>`;
+    }
+    ruler.innerHTML = html;
+    document.getElementById("bodyInner").style.width = width + "px";
+  }
+
+  function escapeHtml(s){
+    return (s||"").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+  }
+
+  function dayProgsForChannel(chan, dayStart, dayEnd){
+    const key = dayStart;
+    chan._cache = chan._cache || new Map();
+    if (chan._cache.has(key)) return chan._cache.get(key);
+    const arr = (chan.progs || []).filter(p => p.stop > dayStart && p.start < dayEnd);
+    chan._cache.set(key, arr);
+    return arr;
+  }
+
+  let rafPending = false;
+  function syncAndRender(){
+    if (rafPending) return;
+    rafPending = true;
+    requestAnimationFrame(() => { rafPending = false; doRender(); });
+  }
+
+  function doRender(){
+    const bodyScroll = document.getElementById("bodyScroll");
+    const channelScroll = document.getElementById("channelScroll");
+    const rulerScroll = document.getElementById("rulerScroll");
+    if (!bodyScroll) return;
+
+    channelScroll.scrollTop = bodyScroll.scrollTop;
+    rulerScroll.scrollLeft = bodyScroll.scrollLeft;
+
+    const scrollTop = bodyScroll.scrollTop;
+    const viewH = bodyScroll.clientHeight;
+    const total = state.channels.length;
+    const firstIdx = Math.max(0, Math.floor(scrollTop/ROW_H) - 4);
+    const lastIdx = Math.min(total, Math.ceil((scrollTop+viewH)/ROW_H) + 4);
+
+    const scrollLeft = bodyScroll.scrollLeft;
+    const viewW = bodyScroll.clientWidth;
+    const visLeft = Math.max(0, scrollLeft - 200);
+    const visRight = scrollLeft + viewW + 200;
+
+    const dayStart = state.days[state.selectedDayIdx];
+    const dayEnd = dayStart + DAY_MS;
+
+    const channelInner = document.getElementById("channelInner");
+    const bodyInner = document.getElementById("bodyInner");
+    channelInner.style.height = bodyInner.style.height = (total*ROW_H) + "px";
+
+    let chanHtml = "";
+    let bodyHtml = "";
+    for (let i = firstIdx; i < lastIdx; i++){
+      const chan = state.channels[i];
+      const top = i*ROW_H;
+      chanHtml += `<div class="chanRow" style="top:${top}px;height:${ROW_H}px;">`+
+        (chan.icon ? `<img src="${escapeHtml(chan.icon)}" loading="lazy" onerror="this.style.display='none'">` : `<div style="width:26px;flex:0 0 auto;"></div>`) +
+        `<span title="${escapeHtml(chan.name)}">${escapeHtml(chan.name)}</span></div>`;
+
+      const progs = dayProgsForChannel(chan, dayStart, dayEnd);
+      bodyHtml += `<div class="gridRow ${i%2?"alt":""}" style="top:${top}px;height:${ROW_H}px;width:${1440*PX_PER_MIN}px;">`;
+      let cursor = dayStart;
+      for (const p of progs){
+        const s = Math.max(p.start, dayStart);
+        const e = Math.min(p.stop, dayEnd);
+        const left = (s-dayStart)/60000*PX_PER_MIN;
+        const width = Math.max(2,(e-s)/60000*PX_PER_MIN);
+        if (left+width < visLeft || left > visRight) { continue; }
+        const isNow = Date.now() >= p.start && Date.now() < p.stop;
+        const timeLabel = new Date(p.start).toLocaleTimeString([],{hour:"numeric",minute:"2-digit"});
+        bodyHtml += `<div class="prog${isNow?" live":""}" style="left:${left}px;width:${width}px;" `+
+          `data-title="${escapeHtml(p.title)}" data-desc="${escapeHtml(p.desc)}" `+
+          `data-start="${p.start}" data-stop="${p.stop}">`+
+          `<div class="t">${timeLabel}</div><div class="ti">${escapeHtml(p.title)}</div></div>`;
+      }
+      bodyHtml += `</div>`;
+    }
+
+    channelInner.innerHTML = chanHtml;
+    bodyInner.innerHTML = bodyHtml;
+
+    // now-line
+    const now = Date.now();
+    const oldLine = document.querySelector(".nowLine");
+    if (oldLine) oldLine.remove();
+    if (now >= dayStart && now < dayEnd){
+      const left = (now-dayStart)/60000*PX_PER_MIN;
+      const line = document.createElement("div");
+      line.className = "nowLine";
+      line.style.left = left + "px";
+      line.style.height = (total*ROW_H) + "px";
+      bodyInner.appendChild(line);
+    }
+
+    bodyInner.querySelectorAll(".prog").forEach(el => {
+      el.addEventListener("click", () => openModal(el.dataset));
+    });
+  }
+
+  function openModal(data){
+    document.getElementById("mTitle").textContent = data.title || "(untitled)";
+    const s = new Date(+data.start), e = new Date(+data.stop);
+    document.getElementById("mMeta").textContent =
+      s.toLocaleString([], {weekday:"short", hour:"numeric", minute:"2-digit", month:"short", day:"numeric"}) +
+      " – " + e.toLocaleTimeString([], {hour:"numeric", minute:"2-digit"});
+    document.getElementById("mDesc").textContent = data.desc || "No description available.";
+    document.getElementById("modalBg").style.display = "flex";
+  }
+  document.getElementById("mClose").addEventListener("click", () => {
+    document.getElementById("modalBg").style.display = "none";
+  });
+  document.getElementById("modalBg").addEventListener("click", (e) => {
+    if (e.target.id === "modalBg") document.getElementById("modalBg").style.display = "none";
+  });
+
+  function renderDayTabs(){
+    dayTabsEl.innerHTML = state.days.map((d,i) => {
+      const label = new Date(d).toLocaleDateString([], {weekday:"short", month:"short", day:"numeric"});
+      const isToday = localMidnight(Date.now()) === d;
+      return `<div class="dayTab${i===state.selectedDayIdx?" active":""}" data-idx="${i}">${label}${isToday?" • today":""}</div>`;
+    }).join("");
+    dayTabsEl.querySelectorAll(".dayTab").forEach(el => {
+      el.addEventListener("click", () => {
+        state.selectedDayIdx = +el.dataset.idx;
+        renderDayTabs();
+        renderRuler(state.days[state.selectedDayIdx]);
+        document.getElementById("bodyScroll").scrollLeft = 0;
+        syncAndRender();
+      });
+    });
+  }
+
+  function applyFilters(){
+    const q = state.search.trim().toLowerCase();
+    state.channels = state.allChannels.filter(c =>
+      matchesRegion(c) && (!q || c.name.toLowerCase().includes(q))
+    );
+    document.getElementById("bodyScroll") && (document.getElementById("bodyScroll").scrollTop = 0);
+    syncAndRender();
+  }
+
+  function jumpToNow(){
+    const now = Date.now();
+    const idx = state.days.findIndex(d => now >= d && now < d+DAY_MS);
+    if (idx >= 0) {
+      state.selectedDayIdx = idx;
+      renderDayTabs();
+      renderRuler(state.days[idx]);
+      const bodyScroll = document.getElementById("bodyScroll");
+      bodyScroll.scrollLeft = Math.max(0, (now-state.days[idx])/60000*PX_PER_MIN - bodyScroll.clientWidth/2);
+      syncAndRender();
+    } else {
+      setStatus("Current time isn't within this guide's date range.", true);
+    }
+  }
+
+  async function loadFromUrl(url){
+    loadBtn.disabled = true;
+    try {
+      const {channels, progsByChannel} = await fetchGuide(url);
+      setStatus("Building grid…");
+      await new Promise(r => setTimeout(r, 10));
+
+      const chanList = [];
+      let minStart = Infinity, maxStop = -Infinity;
+      for (const [id, info] of channels){
+        const progs = progsByChannel.get(id) || [];
+        if (progs.length === 0) continue; // skip channels with no listings
+        for (const p of progs){
+          if (p.start < minStart) minStart = p.start;
+          if (p.stop > maxStop) maxStop = p.stop;
+        }
+        chanList.push({...info, progs});
+      }
+      chanList.sort((a,b) => a.name.localeCompare(b.name));
+
+      if (chanList.length === 0) throw new Error("No channels with programme data found in this feed.");
+
+      const days = [];
+      if (isFinite(minStart) && isFinite(maxStop)){
+        let d = localMidnight(minStart);
+        const end = localMidnight(maxStop);
+        while (d <= end){ days.push(d); d += DAY_MS; }
+      }
+
+      state.allChannels = chanList;
+      state.days = days.length ? days : [localMidnight(Date.now())];
+      state.selectedDayIdx = Math.max(0, state.days.findIndex(d => Date.now() >= d && Date.now() < d+DAY_MS));
+      state.search = "";
+      searchInput.value = "";
+      state.channels = state.allChannels.filter(matchesRegion);
+
+      gridWrap.innerHTML = "";
+      buildGridDOM();
+      renderDayTabs();
+      renderRuler(state.days[state.selectedDayIdx]);
+
+      const bodyScroll = document.getElementById("bodyScroll");
+      bodyScroll.addEventListener("scroll", syncAndRender, {passive:true});
+      window.addEventListener("resize", syncAndRender);
+
+      syncAndRender();
+      jumpToNow();
+
+      setStatus(`Loaded ${chanList.length} channels total (${state.channels.length} shown), ${days.length} day(s) — refreshed ${new Date().toLocaleTimeString()}.`);
+    } catch (err){
+      console.error(err);
+      setStatus("Failed: " + err.message, true);
+      gridWrap.innerHTML = `<div id="emptyState"><div style="font-size:28px;">⚠️</div><div>${escapeHtml(err.message)}</div></div>`;
+    } finally {
+      loadBtn.disabled = false;
+    }
+  }
+
+  loadBtn.addEventListener("click", () => {
+    const url = urlInput.value.trim();
+    if (!url) { setStatus("Enter a feed URL first.", true); return; }
+    loadFromUrl(url);
+  });
+  nowBtn.addEventListener("click", jumpToNow);
+  searchInput.addEventListener("input", () => {
+    state.search = searchInput.value;
+    applyFilters();
+  });
+  document.getElementById("regionTabs").addEventListener("click", (e) => {
+    const el = e.target.closest(".regionTab");
+    if (!el) return;
+    document.querySelectorAll(".regionTab").forEach(t => t.classList.remove("active"));
+    el.classList.add("active");
+    state.region = el.dataset.region;
+    applyFilters();
+  });
+})();
+</script>
+</body>
+</html>
