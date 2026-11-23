@@ -71,6 +71,7 @@
     background:#1a2230;color:#9fb3cc;font-size:11px;font-weight:700;letter-spacing:.04em;
     text-transform:uppercase;border-bottom:1px solid var(--border);border-top:1px solid var(--border);}
   .groupHeaderBody{background:#161c26;}
+  .pinnedHeader{box-shadow:0 2px 6px rgba(0,0,0,0.35);}
 
   #bodyScroll{flex:1 1 auto;overflow:auto;position:relative;background:var(--row);
     -webkit-overflow-scrolling:touch;overscroll-behavior:contain;}
@@ -365,13 +366,15 @@
   }
 
   const GROUP_ORDER = [
-    "UK General & Entertainment", "UK Movies", "UK Sport", "UK News",
-    "US General & Entertainment", "US Movies", "US Sport", "US News",
+    "UK General & Entertainment", "UK Movies", "UK Sport", "UK News", "UK Kids", "UK Documentaries",
+    "US General & Entertainment", "US Movies", "US Sport", "US News", "US Kids", "US Documentaries",
     "Other"
   ];
   const SPORT_RE = /\bsport|sky sports|bt sport|tnt sports|eurosport|premier sports|dazn|motorsport|nascar|racing|golf channel|nfl network|nba tv|mlb network|nhl network|\bwwe\b|\bufc\b|boxing|combat|fight sports|cricket|rugby|formula ?1|\bf1\b/i;
   const MOVIES_RE = /\bmovie|cinema|film4|box office|hallmark|\bstarz\b|\bepix\b|\bmgm\b|\btcm\b|great movies|great action|great romance|sony movies|paramount network/i;
   const NEWS_RE = /\bnews\b|\bcnn\b|msnbc|fox news|sky news|bbc news|bloomberg|\bcnbc\b|al ?jazeera|newsmax/i;
+  const KIDS_RE = /cbeebies|cbbc|nick(?:elodeon)?\b|nick ?jr|nicktoons|disney (?:channel|jr|xd)|cartoon ?network|boomerang|tiny ?pop|^pop$|cartoonito|baby ?tv|\bkix\b|\bboing\b|milkshake|pbs kids|\bkids\b/i;
+  const DOCS_RE = /discovery|animal planet|\bhistory\b|\bh2\b|nat(?:ional)? geo(?:graphic)?|crime\s*\+?\s*investigation|\breally\b|yesterday|smithsonian|science channel|investigation discovery|\bquest\b|\bblaze\b/i;
 
   function categorize(chan){
     const region = regionOf(chan.id); // "uk" | "us" | "other"
@@ -381,6 +384,8 @@
     if (SPORT_RE.test(n)) type = "Sport";
     else if (MOVIES_RE.test(n)) type = "Movies";
     else if (NEWS_RE.test(n)) type = "News";
+    else if (KIDS_RE.test(n)) type = "Kids";
+    else if (DOCS_RE.test(n)) type = "Documentaries";
     return (region === "uk" ? "UK " : "US ") + type;
   }
 
@@ -516,6 +521,24 @@
     const lastBoundIdx = findStartIndex(offsets, scrollTop + viewH) + 3;
     const lastIdx = Math.min(items.length, lastBoundIdx + 1);
 
+    // Sticky group header: whichever group's content is currently scrolled under the
+    // top of the viewport gets its header pinned there, so you can collapse it again
+    // without scrolling all the way back up to find it.
+    let activeHeaderIdx = -1;
+    {
+      let probe = findStartIndex(offsets, scrollTop);
+      while (probe >= 0 && items[probe].kind !== "header") probe--;
+      activeHeaderIdx = probe;
+    }
+    let pinnedTop = null;
+    if (activeHeaderIdx >= 0){
+      let nextHeaderOffset = totalH;
+      for (let i = activeHeaderIdx+1; i < items.length; i++){
+        if (items[i].kind === "header"){ nextHeaderOffset = offsets[i]; break; }
+      }
+      pinnedTop = Math.max(offsets[activeHeaderIdx], Math.min(scrollTop, nextHeaderOffset - HEADER_H));
+    }
+
     const scrollLeft = bodyScroll.scrollLeft;
     const viewW = bodyScroll.clientWidth;
     const visLeft = Math.max(0, scrollLeft - 200);
@@ -536,6 +559,7 @@
       const top = offsets[i];
 
       if (item.kind === "header"){
+        if (i === activeHeaderIdx) continue; // rendered separately, pinned
         const chevron = item.collapsed ? "▸" : "▾";
         chanHtml += `<div class="groupHeader" data-group="${escapeHtml(item.group)}" style="top:${top}px;height:${HEADER_H}px;cursor:pointer;">`+
           `<span style="display:inline-block;width:14px;">${chevron}</span>${escapeHtml(item.label)}</div>`;
@@ -565,6 +589,14 @@
           `<div class="t">${timeLabel}</div><div class="ti">${escapeHtml(p.title)}</div></div>`;
       }
       bodyHtml += `</div>`;
+    }
+
+    if (activeHeaderIdx >= 0 && pinnedTop != null){
+      const item = items[activeHeaderIdx];
+      const chevron = item.collapsed ? "▸" : "▾";
+      chanHtml += `<div class="groupHeader pinnedHeader" data-group="${escapeHtml(item.group)}" style="top:${pinnedTop}px;height:${HEADER_H}px;cursor:pointer;z-index:8;">`+
+        `<span style="display:inline-block;width:14px;">${chevron}</span>${escapeHtml(item.label)}</div>`;
+      bodyHtml += `<div class="groupHeader groupHeaderBody pinnedHeader" data-group="${escapeHtml(item.group)}" style="top:${pinnedTop}px;height:${HEADER_H}px;width:${1440*PX_PER_MIN}px;cursor:pointer;z-index:8;"></div>`;
     }
 
     channelInner.innerHTML = chanHtml;
