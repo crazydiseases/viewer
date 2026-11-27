@@ -1,0 +1,17 @@
+{
+  "name": "epg-stream-proxy",
+  "version": "1.0.0",
+  "private": true,
+  "description": "CORS/header proxy for playing IPTV HLS streams and fetching M3U playlists from the EPG viewer front end.",
+  "type": "commonjs",
+  "main": "server.js",
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "express": "^4.19.2"
+  }
+}
