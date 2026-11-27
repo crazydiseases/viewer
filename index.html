@@ -100,6 +100,32 @@
   #modal p{font-size:13.5px;line-height:1.5;color:#cfd6e0;max-height:220px;overflow:auto;}
   #modal .closeBtn{margin-top:14px;}
 
+  /* Settings modal */
+  #settingsBg{position:fixed;inset:0;background:rgba(0,0,0,0.6);display:none;
+    align-items:center;justify-content:center;z-index:51;}
+  #settingsModal{background:var(--panel2);border:1px solid var(--border);border-radius:10px;
+    padding:18px 20px;max-width:440px;width:90%;}
+  #settingsModal h3{margin:0 0 6px;font-size:16px;}
+  #settingsModal .meta{color:var(--dim);font-size:12px;margin-bottom:12px;line-height:1.4;}
+  #settingsModal label{display:block;font-size:12.5px;color:var(--dim);margin-bottom:10px;}
+  #settingsModal input{width:100%;margin-top:4px;background:var(--panel);border:1px solid var(--border);
+    color:var(--text);border-radius:6px;padding:8px 10px;font-size:13px;font-family:ui-monospace,Menlo,Consolas,monospace;}
+
+  /* Player modal */
+  #playerBg{position:fixed;inset:0;background:rgba(0,0,0,0.85);display:none;
+    align-items:center;justify-content:center;z-index:52;}
+  #playerModal{background:#000;border:1px solid var(--border);border-radius:10px;overflow:hidden;
+    max-width:960px;width:94%;}
+  #playerHeader{display:flex;align-items:center;justify-content:space-between;
+    padding:10px 14px;background:var(--panel2);}
+  #playerHeader span{font-size:14px;font-weight:600;}
+  #playerVideo{width:100%;max-height:70vh;display:block;background:#000;}
+  #playerStatus{padding:8px 14px;background:var(--panel2);}
+
+  .watchBtn{display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;
+    flex:0 0 auto;border-radius:50%;background:var(--accent);color:#fff;font-size:10px;cursor:pointer;
+    margin-left:auto;}
+
   #emptyState{flex:1;display:flex;align-items:center;justify-content:center;
     color:var(--dim);font-size:13px;text-align:center;padding:40px;flex-direction:column;gap:10px;}
 
@@ -161,6 +187,7 @@
     </div>
     <button id="expandAllBtn" class="ghost groupToggleBtn">Expand all</button>
     <button id="collapseAllBtn" class="ghost groupToggleBtn">Collapse all</button>
+    <button id="streamSettingsBtn" class="ghost groupToggleBtn">▶ Streaming</button>
   </div>
   <div id="gridWrap">
     <div id="emptyState">
@@ -176,9 +203,38 @@
     <div class="meta" id="mMeta"></div>
     <p id="mDesc"></p>
     <button class="closeBtn ghost" id="mClose">Close</button>
+    <button class="closeBtn" id="mWatch" style="display:none;margin-top:14px;margin-left:8px;">▶ Watch</button>
   </div>
 </div>
 
+<div id="settingsBg">
+  <div id="settingsModal">
+    <h3>Streaming setup</h3>
+    <div class="meta">Needed to play actual channels, not just view the guide. Saved only in this browser.</div>
+    <label>Proxy base URL<br/><input id="proxyBaseInput" type="text" placeholder="https://your-proxy.up.railway.app" spellcheck="false"/></label>
+    <label>Proxy key<br/><input id="proxyKeyInput" type="text" placeholder="shared key" spellcheck="false"/></label>
+    <label>Playlist (M3U) URL<br/><input id="playlistUrlInput" type="text" placeholder="your Strong IPTV M3U URL" spellcheck="false"/></label>
+    <div id="playlistStatus" class="meta"></div>
+    <div style="display:flex;gap:8px;margin-top:12px;flex-wrap:wrap;">
+      <button id="saveSettingsBtn">Save</button>
+      <button id="loadPlaylistBtn" class="ghost">Load playlist</button>
+      <button id="closeSettingsBtn" class="ghost">Close</button>
+    </div>
+  </div>
+</div>
+
+<div id="playerBg">
+  <div id="playerModal">
+    <div id="playerHeader">
+      <span id="playerTitle"></span>
+      <button id="playerClose" class="ghost">✕</button>
+    </div>
+    <video id="playerVideo" controls autoplay playsinline></video>
+    <div id="playerStatus" class="meta"></div>
+  </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/hls.js@1/dist/hls.min.js"></script>
 <script>
 (function(){
   "use strict";
@@ -344,8 +400,125 @@
     selectedDayIdx: 0,
     search: "",
     region: "ukus",
-    collapsedGroups: new Set() // group keys currently collapsed; populated once groups are known
+    collapsedGroups: new Set(), // group keys currently collapsed; populated once groups are known
+    streamMap: new Map(), // normalized tvg-id -> raw stream URL, from the loaded M3U playlist
+    settings: {proxyBase: "", proxyKey: "", playlistUrl: ""}
   };
+
+  // ---------- Streaming: settings, M3U parsing, playback ----------
+  function normalizeChanId(id){
+    return (id || "").trim().toLowerCase();
+  }
+
+  function loadSettings(){
+    try {
+      const raw = localStorage.getItem("epgStreamSettings");
+      if (raw) Object.assign(state.settings, JSON.parse(raw));
+    } catch {}
+  }
+
+  function saveSettings(){
+    try {
+      localStorage.setItem("epgStreamSettings", JSON.stringify(state.settings));
+    } catch {}
+  }
+
+  function parseM3U(text){
+    const map = new Map();
+    const lines = text.split(/\r?\n/);
+    let pendingId = null;
+    for (const line of lines){
+      const trimmed = line.trim();
+      if (!trimmed) continue;
+      if (trimmed.startsWith("#EXTINF")){
+        const m = /tvg-id="([^"]*)"/i.exec(trimmed);
+        pendingId = m ? normalizeChanId(m[1]) : null;
+      } else if (!trimmed.startsWith("#")){
+        if (pendingId) map.set(pendingId, trimmed);
+        pendingId = null;
+      }
+    }
+    return map;
+  }
+
+  function proxiedStreamUrl(rawUrl){
+    const base = (state.settings.proxyBase || "").replace(/\/+$/, "");
+    const qs = new URLSearchParams({url: rawUrl, key: state.settings.proxyKey || ""});
+    return `${base}/stream?${qs.toString()}`;
+  }
+
+  function proxiedRawUrl(rawUrl){
+    const base = (state.settings.proxyBase || "").replace(/\/+$/, "");
+    const qs = new URLSearchParams({url: rawUrl, key: state.settings.proxyKey || ""});
+    return `${base}/raw?${qs.toString()}`;
+  }
+
+  async function loadPlaylist(){
+    const statusEl = document.getElementById("playlistStatus");
+    if (!state.settings.proxyBase || !state.settings.proxyKey){
+      statusEl.textContent = "Set the proxy base URL and key first.";
+      return;
+    }
+    if (!state.settings.playlistUrl){
+      statusEl.textContent = "Enter your M3U playlist URL first.";
+      return;
+    }
+    statusEl.textContent = "Loading playlist…";
+    try {
+      const resp = await fetch(proxiedRawUrl(state.settings.playlistUrl));
+      if (!resp.ok) throw new Error("HTTP " + resp.status);
+      const text = await resp.text();
+      state.streamMap = parseM3U(text);
+      statusEl.textContent = `Loaded ${state.streamMap.size} channel stream(s) from the playlist.`;
+      syncAndRender();
+    } catch (err){
+      statusEl.textContent = "Failed to load playlist: " + err.message;
+    }
+  }
+
+  let hlsInstance = null;
+
+  function openPlayer(chan, rawStreamUrl){
+    const video = document.getElementById("playerVideo");
+    const statusEl = document.getElementById("playerStatus");
+    document.getElementById("playerTitle").textContent = chan.name;
+    document.getElementById("playerBg").style.display = "flex";
+    statusEl.textContent = "Connecting…";
+
+    const src = proxiedStreamUrl(rawStreamUrl);
+    closePlayerInternal(false); // tear down any previous instance first
+
+    if (window.Hls && window.Hls.isSupported()){
+      hlsInstance = new Hls({ maxBufferLength: 30 });
+      hlsInstance.on(Hls.Events.ERROR, (evt, data) => {
+        if (data.fatal) statusEl.textContent = "Playback error: " + (data.details || data.type);
+      });
+      hlsInstance.on(Hls.Events.MANIFEST_PARSED, () => { statusEl.textContent = ""; });
+      hlsInstance.loadSource(src);
+      hlsInstance.attachMedia(video);
+      video.play().catch(() => {});
+    } else if (video.canPlayType("application/vnd.apple.mpegurl")){
+      video.src = src;
+      video.addEventListener("loadedmetadata", () => { statusEl.textContent = ""; }, {once: true});
+      video.play().catch(() => {});
+    } else {
+      statusEl.textContent = "This browser can't play HLS streams.";
+    }
+  }
+
+  function closePlayerInternal(hideModal){
+    const video = document.getElementById("playerVideo");
+    if (hlsInstance){
+      try { hlsInstance.destroy(); } catch {}
+      hlsInstance = null;
+    }
+    if (video){
+      video.pause();
+      video.removeAttribute("src");
+      video.load();
+    }
+    if (hideModal) document.getElementById("playerBg").style.display = "none";
+  }
 
   function regionOf(id){
     const s = id.toLowerCase();
@@ -568,9 +741,12 @@
       }
 
       const chan = item.chan;
+      const rawStream = state.streamMap.get(normalizeChanId(chan.id));
       chanHtml += `<div class="chanRow" style="top:${top}px;height:${ROW_H}px;">`+
         (chan.icon ? `<img src="${escapeHtml(chan.icon)}" loading="lazy" onerror="this.style.display='none'">` : `<div style="width:26px;flex:0 0 auto;"></div>`) +
-        `<span title="${escapeHtml(chan.name)}">${escapeHtml(chan.name)}</span></div>`;
+        `<span title="${escapeHtml(chan.name)}">${escapeHtml(chan.name)}</span>`+
+        (rawStream ? `<span class="watchBtn" data-chanid="${escapeHtml(chan.id)}" title="Watch live">▶</span>` : "") +
+        `</div>`;
 
       const progs = dayProgsForChannel(chan, dayStart, dayEnd);
       bodyHtml += `<div class="gridRow ${chanRowCounter%2?"alt":""}" style="top:${top}px;height:${ROW_H}px;width:${1440*PX_PER_MIN}px;">`;
@@ -585,7 +761,7 @@
         const timeLabel = new Date(p.start).toLocaleTimeString([],{hour:"numeric",minute:"2-digit"});
         bodyHtml += `<div class="prog${isNow?" live":""}" style="left:${left}px;width:${width}px;" `+
           `data-title="${escapeHtml(p.title)}" data-desc="${escapeHtml(p.desc)}" `+
-          `data-start="${p.start}" data-stop="${p.stop}">`+
+          `data-start="${p.start}" data-stop="${p.stop}" data-chanid="${escapeHtml(chan.id)}" data-channame="${escapeHtml(chan.name)}">`+
           `<div class="t">${timeLabel}</div><div class="ti">${escapeHtml(p.title)}</div></div>`;
       }
       bodyHtml += `</div>`;
@@ -619,6 +795,16 @@
       el.addEventListener("click", () => openModal(el.dataset));
     });
 
+    channelInner.querySelectorAll(".watchBtn").forEach(el => {
+      el.addEventListener("click", (e) => {
+        e.stopPropagation();
+        const chanId = normalizeChanId(el.dataset.chanid);
+        const chan = state.channels.find(c => normalizeChanId(c.id) === chanId);
+        const rawStream = state.streamMap.get(chanId);
+        if (chan && rawStream) openPlayer(chan, rawStream);
+      });
+    });
+
     channelInner.querySelectorAll(".groupHeader[data-group]").forEach(el => {
       el.addEventListener("click", () => toggleGroup(el.dataset.group));
     });
@@ -634,6 +820,20 @@
       s.toLocaleString([], {weekday:"short", hour:"numeric", minute:"2-digit", month:"short", day:"numeric"}) +
       " – " + e.toLocaleTimeString([], {hour:"numeric", minute:"2-digit"});
     document.getElementById("mDesc").textContent = data.desc || "No description available.";
+
+    const chanId = normalizeChanId(data.chanid);
+    const rawStream = state.streamMap.get(chanId);
+    const watchBtn = document.getElementById("mWatch");
+    if (rawStream){
+      watchBtn.style.display = "inline-block";
+      watchBtn.onclick = () => {
+        document.getElementById("modalBg").style.display = "none";
+        openPlayer({id: data.chanid, name: data.channame || "Live"}, rawStream);
+      };
+    } else {
+      watchBtn.style.display = "none";
+      watchBtn.onclick = null;
+    }
     document.getElementById("modalBg").style.display = "flex";
   }
   document.getElementById("mClose").addEventListener("click", () => {
@@ -768,6 +968,49 @@
   });
   document.getElementById("expandAllBtn").addEventListener("click", () => setAllGroupsCollapsed(false));
   document.getElementById("collapseAllBtn").addEventListener("click", () => setAllGroupsCollapsed(true));
+
+  // --- Streaming settings modal ---
+  function openSettingsModal(){
+    document.getElementById("proxyBaseInput").value = state.settings.proxyBase || "";
+    document.getElementById("proxyKeyInput").value = state.settings.proxyKey || "";
+    document.getElementById("playlistUrlInput").value = state.settings.playlistUrl || "";
+    document.getElementById("playlistStatus").textContent =
+      state.streamMap.size ? `${state.streamMap.size} channel stream(s) currently loaded.` : "";
+    document.getElementById("settingsBg").style.display = "flex";
+  }
+  document.getElementById("streamSettingsBtn").addEventListener("click", openSettingsModal);
+  document.getElementById("closeSettingsBtn").addEventListener("click", () => {
+    document.getElementById("settingsBg").style.display = "none";
+  });
+  document.getElementById("settingsBg").addEventListener("click", (e) => {
+    if (e.target.id === "settingsBg") document.getElementById("settingsBg").style.display = "none";
+  });
+  document.getElementById("saveSettingsBtn").addEventListener("click", () => {
+    state.settings.proxyBase = document.getElementById("proxyBaseInput").value.trim();
+    state.settings.proxyKey = document.getElementById("proxyKeyInput").value.trim();
+    state.settings.playlistUrl = document.getElementById("playlistUrlInput").value.trim();
+    saveSettings();
+    document.getElementById("playlistStatus").textContent = "Settings saved.";
+  });
+  document.getElementById("loadPlaylistBtn").addEventListener("click", () => {
+    state.settings.proxyBase = document.getElementById("proxyBaseInput").value.trim();
+    state.settings.proxyKey = document.getElementById("proxyKeyInput").value.trim();
+    state.settings.playlistUrl = document.getElementById("playlistUrlInput").value.trim();
+    saveSettings();
+    loadPlaylist();
+  });
+
+  // --- Player modal ---
+  document.getElementById("playerClose").addEventListener("click", () => closePlayerInternal(true));
+  document.getElementById("playerBg").addEventListener("click", (e) => {
+    if (e.target.id === "playerBg") closePlayerInternal(true);
+  });
+
+  // --- Startup: restore saved streaming settings and auto-load the playlist if one is saved ---
+  loadSettings();
+  if (state.settings.proxyBase && state.settings.proxyKey && state.settings.playlistUrl){
+    loadPlaylist();
+  }
 })();
 </script>
 </body>
