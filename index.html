@@ -177,6 +177,7 @@
     <div id="status">Pick a feed (or paste your own XMLTV / .xml.gz URL) and click Load guide.</div>
   </div>
   <div id="subbar">
+    <button id="streamSettingsBtn" class="groupToggleBtn" style="background:var(--accent2);color:#fff;border-color:var(--accent2);font-weight:600;flex:0 0 auto;">▶ Streaming</button>
     <div id="dayTabs"></div>
     <input id="searchInput" type="text" placeholder="Search channels…" />
     <div id="regionTabs">
@@ -187,7 +188,6 @@
     </div>
     <button id="expandAllBtn" class="ghost groupToggleBtn">Expand all</button>
     <button id="collapseAllBtn" class="ghost groupToggleBtn">Collapse all</button>
-    <button id="streamSettingsBtn" class="ghost groupToggleBtn">▶ Streaming</button>
   </div>
   <div id="gridWrap">
     <div id="emptyState">
@@ -219,6 +219,14 @@
       <button id="saveSettingsBtn">Save</button>
       <button id="loadPlaylistBtn" class="ghost">Load playlist</button>
       <button id="closeSettingsBtn" class="ghost">Close</button>
+    </div>
+    <div class="meta" style="margin-top:14px;border-top:1px solid var(--border);padding-top:10px;">
+      Settings are saved only in this browser, so your phone and desktop don't share them automatically.
+      Fill in the fields above, save, then tap below to copy a link that carries these settings —
+      open that link once on your other device (e.g. send it to yourself) and it'll save them there too.
+    </div>
+    <div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap;">
+      <button id="copySyncLinkBtn" class="ghost">Copy device-sync link</button>
     </div>
   </div>
 </div>
@@ -469,7 +477,12 @@
       if (!resp.ok) throw new Error("HTTP " + resp.status);
       const text = await resp.text();
       state.streamMap = parseM3U(text);
-      statusEl.textContent = `Loaded ${state.streamMap.size} channel stream(s) from the playlist.`;
+      const matched = state.allChannels.filter(c => state.streamMap.has(normalizeChanId(c.id))).length;
+      if (state.streamMap.size && matched === 0){
+        statusEl.textContent = `Loaded ${state.streamMap.size} playlist entries, but none matched this guide's channel IDs (0 of ${state.allChannels.length}). Your playlist's channel IDs likely use a different naming scheme than this EPG feed — let Claude know and a name-based fallback match can be added.`;
+      } else {
+        statusEl.textContent = `Loaded ${state.streamMap.size} playlist entries — matched ${matched} of ${state.allChannels.length} guide channels. Watch ▶ buttons now appear next to matched channels.`;
+      }
       syncAndRender();
     } catch (err){
       statusEl.textContent = "Failed to load playlist: " + err.message;
@@ -999,6 +1012,28 @@
     saveSettings();
     loadPlaylist();
   });
+  document.getElementById("copySyncLinkBtn").addEventListener("click", async () => {
+    state.settings.proxyBase = document.getElementById("proxyBaseInput").value.trim();
+    state.settings.proxyKey = document.getElementById("proxyKeyInput").value.trim();
+    state.settings.playlistUrl = document.getElementById("playlistUrlInput").value.trim();
+    saveSettings();
+    const url = new URL(location.href);
+    url.hash = "";
+    url.search = "";
+    const qs = new URLSearchParams({
+      pb: state.settings.proxyBase,
+      pk: state.settings.proxyKey,
+      pl: state.settings.playlistUrl
+    });
+    const link = `${url.toString()}#sync=${encodeURIComponent(btoa(qs.toString()))}`;
+    const statusEl = document.getElementById("playlistStatus");
+    try {
+      await navigator.clipboard.writeText(link);
+      statusEl.textContent = "Sync link copied — paste it to yourself and open it on your other device.";
+    } catch {
+      statusEl.textContent = "Couldn't copy automatically. Link: " + link;
+    }
+  });
 
   // --- Player modal ---
   document.getElementById("playerClose").addEventListener("click", () => closePlayerInternal(true));
@@ -1008,6 +1043,19 @@
 
   // --- Startup: restore saved streaming settings and auto-load the playlist if one is saved ---
   loadSettings();
+  (function applySyncLinkIfPresent(){
+    const m = /#sync=([^&]+)/.exec(location.hash);
+    if (!m) return;
+    try {
+      const qs = new URLSearchParams(atob(decodeURIComponent(m[1])));
+      state.settings.proxyBase = qs.get("pb") || state.settings.proxyBase;
+      state.settings.proxyKey = qs.get("pk") || state.settings.proxyKey;
+      state.settings.playlistUrl = qs.get("pl") || state.settings.playlistUrl;
+      saveSettings();
+    } catch {}
+    // Strip the secret out of the visible URL/history once it's been read.
+    history.replaceState(null, "", location.pathname + location.search);
+  })();
   if (state.settings.proxyBase && state.settings.proxyKey && state.settings.playlistUrl){
     loadPlaylist();
   }
