@@ -409,13 +409,30 @@
     search: "",
     region: "ukus",
     collapsedGroups: new Set(), // group keys currently collapsed; populated once groups are known
-    streamMap: new Map(), // normalized tvg-id -> raw stream URL, from the loaded M3U playlist
+    streamMap: {byId: new Map(), byName: new Map(), count: 0}, // from the loaded M3U playlist
     settings: {proxyBase: "", proxyKey: "", playlistUrl: ""}
   };
 
   // ---------- Streaming: settings, M3U parsing, playback ----------
   function normalizeChanId(id){
     return (id || "").trim().toLowerCase();
+  }
+
+  // Loose name match used as a fallback when the playlist's tvg-id doesn't line up
+  // with this EPG feed's channel ids (very common across different M3U sources).
+  function normalizeChanName(name){
+    return (name || "")
+      .toLowerCase()
+      .replace(/\(.*?\)/g, "")
+      .replace(/\b(hd|fhd|uhd|sd|4k)\b/g, "")
+      .replace(/[^a-z0-9]+/g, "")
+      .trim();
+  }
+
+  function lookupStream(chanId, chanName){
+    const byId = state.streamMap.byId.get(normalizeChanId(chanId));
+    if (byId) return byId;
+    return state.streamMap.byName.get(normalizeChanName(chanName)) || null;
   }
 
   function loadSettings(){
@@ -432,21 +449,29 @@
   }
 
   function parseM3U(text){
-    const map = new Map();
+    const byId = new Map();
+    const byName = new Map();
+    let count = 0;
     const lines = text.split(/\r?\n/);
-    let pendingId = null;
+    let pendingId = null, pendingName = null;
     for (const line of lines){
       const trimmed = line.trim();
       if (!trimmed) continue;
       if (trimmed.startsWith("#EXTINF")){
-        const m = /tvg-id="([^"]*)"/i.exec(trimmed);
-        pendingId = m ? normalizeChanId(m[1]) : null;
+        const idM = /tvg-id="([^"]*)"/i.exec(trimmed);
+        const nameAttrM = /tvg-name="([^"]*)"/i.exec(trimmed);
+        const displayM = /,(.*)$/.exec(trimmed);
+        pendingId = (idM && idM[1]) ? normalizeChanId(idM[1]) : null;
+        const rawName = (nameAttrM && nameAttrM[1]) || (displayM && displayM[1]) || "";
+        pendingName = rawName ? normalizeChanName(rawName) : null;
       } else if (!trimmed.startsWith("#")){
-        if (pendingId) map.set(pendingId, trimmed);
-        pendingId = null;
+        if (pendingId) byId.set(pendingId, trimmed);
+        if (pendingName && !byName.has(pendingName)) byName.set(pendingName, trimmed);
+        if (pendingId || pendingName) count++;
+        pendingId = null; pendingName = null;
       }
     }
-    return map;
+    return {byId, byName, count};
   }
 
   function proxiedStreamUrl(rawUrl){
@@ -477,11 +502,13 @@
       if (!resp.ok) throw new Error("HTTP " + resp.status);
       const text = await resp.text();
       state.streamMap = parseM3U(text);
-      const matched = state.allChannels.filter(c => state.streamMap.has(normalizeChanId(c.id))).length;
-      if (state.streamMap.size && matched === 0){
-        statusEl.textContent = `Loaded ${state.streamMap.size} playlist entries, but none matched this guide's channel IDs (0 of ${state.allChannels.length}). Your playlist's channel IDs likely use a different naming scheme than this EPG feed — let Claude know and a name-based fallback match can be added.`;
+      const matched = state.allChannels.filter(c => lookupStream(c.id, c.name)).length;
+      if (state.streamMap.count && matched === 0){
+        statusEl.textContent = `Loaded ${state.streamMap.count} playlist entries, but none matched this guide — neither by channel ID nor by name (0 of ${state.allChannels.length}). Your playlist's channel names/IDs likely use quite different wording than this EPG feed uses. Double-check the playlist URL is actually your Strong IPTV M3U (not just the EPG), and if it still comes up empty, send Claude a couple of example channel lines from your playlist so the matching can be tuned.`;
+      } else if (!state.streamMap.count){
+        statusEl.textContent = `The playlist loaded but no channel entries were found in it — check the URL points to an M3U playlist, not an XML/EPG file.`;
       } else {
-        statusEl.textContent = `Loaded ${state.streamMap.size} playlist entries — matched ${matched} of ${state.allChannels.length} guide channels. Watch ▶ buttons now appear next to matched channels.`;
+        statusEl.textContent = `Loaded ${state.streamMap.count} playlist entries — matched ${matched} of ${state.allChannels.length} guide channels (by ID or name). Watch ▶ buttons now appear next to matched channels.`;
       }
       syncAndRender();
     } catch (err){
@@ -754,7 +781,7 @@
       }
 
       const chan = item.chan;
-      const rawStream = state.streamMap.get(normalizeChanId(chan.id));
+      const rawStream = lookupStream(chan.id, chan.name);
       chanHtml += `<div class="chanRow" style="top:${top}px;height:${ROW_H}px;">`+
         (chan.icon ? `<img src="${escapeHtml(chan.icon)}" loading="lazy" onerror="this.style.display='none'">` : `<div style="width:26px;flex:0 0 auto;"></div>`) +
         `<span title="${escapeHtml(chan.name)}">${escapeHtml(chan.name)}</span>`+
@@ -813,7 +840,7 @@
         e.stopPropagation();
         const chanId = normalizeChanId(el.dataset.chanid);
         const chan = state.channels.find(c => normalizeChanId(c.id) === chanId);
-        const rawStream = state.streamMap.get(chanId);
+        const rawStream = chan ? lookupStream(chan.id, chan.name) : null;
         if (chan && rawStream) openPlayer(chan, rawStream);
       });
     });
@@ -834,8 +861,7 @@
       " – " + e.toLocaleTimeString([], {hour:"numeric", minute:"2-digit"});
     document.getElementById("mDesc").textContent = data.desc || "No description available.";
 
-    const chanId = normalizeChanId(data.chanid);
-    const rawStream = state.streamMap.get(chanId);
+    const rawStream = lookupStream(data.chanid, data.channame);
     const watchBtn = document.getElementById("mWatch");
     if (rawStream){
       watchBtn.style.display = "inline-block";
@@ -988,7 +1014,7 @@
     document.getElementById("proxyKeyInput").value = state.settings.proxyKey || "";
     document.getElementById("playlistUrlInput").value = state.settings.playlistUrl || "";
     document.getElementById("playlistStatus").textContent =
-      state.streamMap.size ? `${state.streamMap.size} channel stream(s) currently loaded.` : "";
+      state.streamMap.count ? `${state.streamMap.count} channel stream(s) currently loaded.` : "";
     document.getElementById("settingsBg").style.display = "flex";
   }
   document.getElementById("streamSettingsBtn").addEventListener("click", openSettingsModal);
